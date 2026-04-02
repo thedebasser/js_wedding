@@ -102,6 +102,13 @@
             }
         }
 
+        /* iOS Safari: background-attachment: fixed is not supported */
+        @supports (-webkit-touch-callout: none) {
+            .hero-parallax {
+                background-attachment: scroll;
+            }
+        }
+
         /* Floating animation */
         @keyframes float {
             0%, 100% { transform: translateY(0); }
@@ -211,6 +218,12 @@
         }
         .heart-pulse {
             animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* iOS viewport height fix: 100vh includes address bar on iOS */
+        #home {
+            min-height: 100vh;
+            min-height: 100dvh;
         }
     </style>
 </head>
@@ -500,12 +513,16 @@
         const CORRECT_PASSWORD_HASH = '5d2c4f6de7f85dcc139b10980150a5b4e1b2e22328bdac7817aa72c45e41b3b3';
         
         // Check if already logged in
-        if (sessionStorage.getItem('weddingAuth') === 'true') {
-            document.getElementById('passwordOverlay').style.display = 'none';
-        }
+        try {
+            if (sessionStorage.getItem('weddingAuth') === 'true') {
+                document.getElementById('passwordOverlay').style.display = 'none';
+            }
+        } catch(e) { /* sessionStorage unavailable (Safari private mode) */ }
         
         // Hash function using SHA-256
         async function hashPassword(password) {
+            // crypto.subtle is only available in secure contexts (HTTPS/localhost)
+            if (!window.crypto || !window.crypto.subtle) return null;
             const encoder = new TextEncoder();
             const data = encoder.encode(password);
             const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -519,15 +536,23 @@
             const error = document.getElementById('passwordError');
             
             const hashedInput = await hashPassword(input.value);
-            
+
+            // hashedInput is null if crypto.subtle unavailable (non-HTTPS context)
+            if (hashedInput === null) {
+                error.textContent = 'This page must be opened over HTTPS.';
+                error.classList.remove('hidden');
+                return;
+            }
+
             if (hashedInput === CORRECT_PASSWORD_HASH) {
-                sessionStorage.setItem('weddingAuth', 'true');
+                try { sessionStorage.setItem('weddingAuth', 'true'); } catch(e) { /* Safari private mode */ }
                 document.getElementById('passwordOverlay').style.display = 'none';
                 error.classList.add('hidden');
             } else {
+                error.textContent = 'Incorrect password. Please try again.';
                 error.classList.remove('hidden');
                 input.value = '';
-                input.focus();
+                // .focus() after async is silently ignored on iOS — omitted intentionally
             }
         }
         
@@ -540,7 +565,7 @@
         
         // Countdown Timer
         function updateCountdown() {
-            const weddingDate = new Date('August 15, 2026 16:30:00').getTime();
+            const weddingDate = new Date('2026-08-15T16:30:00').getTime();
             const now = new Date().getTime();
             const distance = weddingDate - now;
 
@@ -583,8 +608,10 @@
         window.addEventListener('scroll', () => {
             if (window.scrollY > 100) {
                 navbar.classList.add('bg-wine/95', 'backdrop-blur-md', 'shadow-lg');
+                navbar.style.webkitBackdropFilter = 'blur(12px)';
             } else {
                 navbar.classList.remove('bg-wine/95', 'backdrop-blur-md', 'shadow-lg');
+                navbar.style.webkitBackdropFilter = '';
             }
         });
 
@@ -617,14 +644,24 @@
         });
 
         // Modal functions
+        let _modalScrollY = 0;
         function showModal() {
+            _modalScrollY = window.scrollY;
             document.getElementById('successModal').classList.add('active');
+            // position:fixed is required on iOS — overflow:hidden alone doesn't prevent scroll
             document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.top = `-${_modalScrollY}px`;
+            document.body.style.width = '100%';
         }
 
         function closeModal() {
             document.getElementById('successModal').classList.remove('active');
             document.body.style.overflow = '';
+            document.body.style.position = '';
+            document.body.style.top = '';
+            document.body.style.width = '';
+            window.scrollTo(0, _modalScrollY);
         }
 
         // Close modal on overlay click
@@ -640,10 +677,12 @@
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
                 if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
+                    // Use scrollIntoView with smooth behavior; falls back to instant on older Safari
+                    if ('scrollBehavior' in document.documentElement.style) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    } else {
+                        target.scrollIntoView(true);
+                    }
                 }
             });
         });
